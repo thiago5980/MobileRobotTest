@@ -1,0 +1,3 @@
+/home/thiago/airo/MobileRobotTest/build/CMakeFiles/mapf_test.dir
+/home/thiago/airo/MobileRobotTest/build/CMakeFiles/edit_cache.dir
+/home/thiago/airo/MobileRobotTest/build/CMakeFiles/rebuild_cache.dir

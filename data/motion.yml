@@ -2,13 +2,42 @@ root:
   agent:
     number: 0
     path:
-      duration: 20.0
+      duration: 75.0
       sections:
-        - motion: 0
-          duration: 5.0
         - motion: 1
-          duration: 5.0
+          duration: 2.0
         - motion: 0
-          duration: 5.0
+          duration: 1.0          
+        - motion: 3
+          duration: 2.0
         - motion: 0
-          duration: 5.0
+          duration: 1.0
+        - motion: 1
+          duration: 2.0
+        - motion: 0
+          duration: 1.0          
+        - motion: 4
+          duration: 2.0
+        - motion: 0
+          duration: 1.0          
+        - motion: 1
+          duration: 2.0
+        - motion: 0
+          duration: 1.0          
+        - motion: 3
+          duration: 2.0
+        - motion: 0
+          duration: 1.0
+        - motion: 1
+          duration: 2.0
+        - motion: 0
+          duration: 1.0
+        - motion: 4
+          duration: 2.0
+        - motion: 0
+          duration: 1.0
+        - motion: 1
+          duration: 2.0
+        - motion: 0
+          duration: 1.0
+

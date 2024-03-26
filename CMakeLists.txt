@@ -8,7 +8,6 @@ ENDIF()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 
-find_package(LaChaCom REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(OpenCV REQUIRED)
 
@@ -18,9 +17,14 @@ include_directories(${OPENCV_INCLUDE_DIRS})
 link_directories(${OpenCV_LIBRARY_DIRS})
 
 
-file(GLOB SOURCES "src/*.cpp")
+file(GLOB SOURCES "src/main.cpp")
+# file(GLOB SERIAL_SOURCES "src/test.cpp")
 
 add_executable(mapf_test ${SOURCES})
 target_link_libraries(mapf_test 
-    LaChaCom::LaChaCom ${YAML_CPP_LIBRARIES} ${OpenCV_LIBRARIES}
+    ${YAML_CPP_LIBRARIES} ${OpenCV_LIBRARIES}
 )
+
+# add_executable(serial_test ${SERIAL_SOURCES})
+# target_link_libraries(serial_test)
+

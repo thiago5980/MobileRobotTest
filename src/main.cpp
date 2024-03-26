@@ -1,53 +1,54 @@
-#include <communication/interface.hpp>
-#include <communication/interfaces/uart.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/aruco.hpp>
 #include <yaml-cpp/yaml.h>
-#include <string>
 #include <iomanip>
 #include <iostream>
 #include <thread>
 #include <chrono>
 #include <vector>
-#include <mutex>
-#include <shared_mutex>
 #include <cstdint>
 #include <cstdlib>
+#include "serial.hpp"
 
 #include "fdcl_common.hpp"
 
 using namespace std;
-using namespace communication;
+
+const int StopAcc = 2;
+const int LinVel = 45;
+const int AngVel = 18;
+const int LinAcc = 2;
+const int AngAcc = 2;
 
 std::vector<int> motion_to_velocity(int _m, double _d)
 {
   if (_m==0) // stop
   {
-    return std::vector<int>{0, 0, 0, 0, 0, 0};
-  }
+    return std::vector<int>{0, 0, StopAcc, 0, 0, StopAcc};
+  } 
   if (_m==1) // forward
   {
-    return std::vector<int>{1, 100, 200, 1, 100, 200};
+    return std::vector<int>{1, LinVel, LinAcc, 0, LinVel, LinAcc};
   }
   if (_m==2) // backward
   {
-    return std::vector<int>{0, 100, 200, 0, 100, 200};
+    return std::vector<int>{0, LinVel, LinAcc, 1, LinVel, LinAcc};
   }
   if (_m==3) // rotate clockwise 90 degree
   {
-   return std::vector<int>{1, 100, 200, 0, 100, 200}; 
+   return std::vector<int>{1, AngVel, AngAcc, 1, AngVel, AngAcc}; 
   }
   if (_m==4) // rotate counter clockwise 90 degree
   {
-    return std::vector<int>{0, 100, 200, 1, 100, 200};
+    return std::vector<int>{0, AngVel, AngAcc, 0, AngVel, AngAcc};
   }
   if (_m==5) // rotate clockwise 180 degree
   {
-    return std::vector<int>{1, 100, 200, 1, 100, 200};
+    return std::vector<int>{1, AngVel*2, AngAcc, 1, AngVel, AngAcc};
   }
   if (_m==6) // rotate counter clockwise 180 degree
   {
-    return std::vector<int>{0, 100, 200, 0, 100, 200};
+    return std::vector<int>{0, AngVel*2, AngAcc, 0, AngVel, AngAcc};
   }
   return std::vector<int>();
 }
@@ -76,31 +77,34 @@ uint8_t checksum(const std::vector<uint8_t>& data) {
   return _d;
 }
 
-std::vector<uint8_t> extractMessage(const char* buffer, ssize_t start, ssize_t length) 
+std::vector<uint8_t> extractMessage(const uint8_t* buffer, ssize_t start, ssize_t length) 
 {
   return std::vector<uint8_t>(buffer + start, buffer + start + length);
 }
 
-uint16_t readLittleEndian16(const std::vector<uint8_t>& data, size_t index) 
-{
-  return static_cast<uint16_t>(data[index]) |
-          (static_cast<uint16_t>(data[index + 1]) << 8);
+int32_t bytesToInt32LittleEndian(const std::vector<uint8_t>& bytes, size_t start) {
+    return static_cast<int32_t>(bytes[start+3]) |
+           (static_cast<int32_t>(bytes[start+2]) << 8) |
+           (static_cast<int32_t>(bytes[start+1]) << 16) |
+           (static_cast<int32_t>(bytes[start]) << 24);
 }
 
-std::vector<uint16_t> translateData(const std::vector<uint8_t>& data) 
+std::vector<int32_t> translateData(const std::vector<uint8_t>& data) 
 {
-  std::vector<uint16_t> result;
+  std::vector<int32_t> result;
   std::vector<uint8_t> _data(data.begin(), data.end()-1);
   auto _c = checksum(_data);
   if (_c == data.back())
   {
     // std::cout << "Checksum is correct" << std::endl;
-    if (_data.size() >= 8)
+    if (_data.size() == 8)
     {
-      result.push_back(readLittleEndian16(_data, 0));
-      result.push_back(readLittleEndian16(_data, 2));
-      result.push_back(readLittleEndian16(_data, 4));
-      result.push_back(readLittleEndian16(_data, 6));
+      // std::cout << "Data size is correct" << std::endl;
+      printData(_data);
+      int32_t rightPulse = bytesToInt32LittleEndian(_data, 0);
+      int32_t leftPulse = bytesToInt32LittleEndian(_data, 4);
+      result.push_back(leftPulse);
+      result.push_back(rightPulse);
     }
     return result;
   }
@@ -109,7 +113,6 @@ std::vector<uint16_t> translateData(const std::vector<uint8_t>& data)
     cerr << "Checksum is not correct" << std::endl;
     return result;
   }
-  
 }
 
 std::vector<uint8_t> motor_push(int mode, int l_dir=0, int l_rpm=0, int l_acc=0, int r_dir=0, int r_rpm=0, int r_acc=0)
@@ -120,6 +123,15 @@ std::vector<uint8_t> motor_push(int mode, int l_dir=0, int l_rpm=0, int l_acc=0,
   data.push_back(0xFF);
 
   std::vector<uint8_t> mode_byte;
+  if (mode == 0x33)
+  {
+    mode_byte.push_back(static_cast<uint8_t>(mode));
+    uint8_t _checksum = checksum(mode_byte);
+    mode_byte.push_back(_checksum);
+    data.insert(data.end(), mode_byte.begin(), mode_byte.end());
+    return data;
+  }
+
   std::vector<uint8_t> byte_l;
   std::vector<uint8_t> byte_r;
 
@@ -149,24 +161,27 @@ std::vector<uint8_t> motor_push(int mode, int l_dir=0, int l_rpm=0, int l_acc=0,
   return data;
 }
 
-void writeUart(UART& uart, std::vector<std::pair<int, double>>& motion) 
+void writeUart(std::vector<std::pair<int, double>>& motion) 
 {
+  Serial driver("/dev/ttyUSB0", 115200);
+
   bool isCallback = true;
-  const size_t BUFFER_SIZE = 128;
-  char buffer[BUFFER_SIZE];
+  const size_t BUFFER_SIZE = 1024;
+  uint8_t buffer[BUFFER_SIZE];
 
   unsigned int it = 0;
   unsigned int system_it = 0;
   double _passTime = 0.0;
   double duration = 0.0;
   auto start = chrono::steady_clock::now();
-  
+  int32_t left_pulse;
+  int32_t right_pulse;
   while (true) 
   {
     auto loop_start = chrono::steady_clock::now();
     auto _m = get<0>(motion[it]);
     auto _d = get<1>(motion[it]);
-
+    
     if (it > motion.size())
     {
       std::cout << "end sequence" << std::endl;
@@ -185,8 +200,9 @@ void writeUart(UART& uart, std::vector<std::pair<int, double>>& motion)
     }
     else
     {
-      auto _data = motor_push(1, _v[0], _v[1], _v[2], _v[3], _v[4], _v[5]);
-      ssize_t result = uart.write(reinterpret_cast<const char*>(_data.data()), _data.size());
+      auto _data = motor_push(0xF6, _v[0], _v[1], _v[2], _v[3], _v[4], _v[5]);
+      // printData(_data);
+      ssize_t result = driver.swrite(reinterpret_cast<const char*>(_data.data()), _data.size());
       this_thread::sleep_for(chrono::milliseconds(3));
       if (result < 0) 
       {
@@ -194,17 +210,18 @@ void writeUart(UART& uart, std::vector<std::pair<int, double>>& motion)
       }
     }
 
-    if (system_it%2 == 0 && isCallback)
+    if (system_it%80 == 0 && isCallback)
     {
-      auto _data = motor_push(3); // motor data callback
-      ssize_t check_return = uart.write(reinterpret_cast<const char*>(_data.data()), _data.size());
+      auto _data = motor_push(0x33); // motor data callback
+      ssize_t check_return = driver.swrite(reinterpret_cast<const char*>(_data.data()), _data.size());
+      // printData(_data);
 
       this_thread::sleep_for(chrono::milliseconds(3));
       if (check_return < 0)
         cerr << "not system callback send\n";
       else
       {
-        ssize_t bytesRead = uart.read(buffer, BUFFER_SIZE);
+        int bytesRead = driver.sread(buffer, sizeof(buffer));
         if (bytesRead < 0) 
         {
           cerr << "Read error" << endl;
@@ -212,7 +229,7 @@ void writeUart(UART& uart, std::vector<std::pair<int, double>>& motion)
         else 
         {
           int messageLength = 9;
-          for (ssize_t i = 0; i < bytesRead; ++i) 
+          for (int i = 0; i < bytesRead; ++i) 
           {
             if (i + 1 < bytesRead && static_cast<unsigned char>(buffer[i])==0xFF && static_cast<unsigned char>(buffer[i+1])==0xFF)
             {
@@ -220,6 +237,13 @@ void writeUart(UART& uart, std::vector<std::pair<int, double>>& motion)
               {
                 auto message = extractMessage(buffer, i + 2, messageLength);
                 auto result = translateData(message);
+                if (result.size() == 2)
+                {
+                  std::cout << "Left pulse: " << result[0] << " Right pulse: " << result[1] << std::endl;
+                  std::cout << std::dec <<  "Left pulse : " << (result[0] - left_pulse) << " Right pulse : " << (result[1] - right_pulse) << std::endl;
+                  left_pulse = result[0];
+                  right_pulse = result[1];
+                }
                 i += messageLength + 1;
               }
             }
@@ -232,9 +256,9 @@ void writeUart(UART& uart, std::vector<std::pair<int, double>>& motion)
     auto loop_end = chrono::steady_clock::now(); 
     auto loop_duration = chrono::duration_cast<chrono::milliseconds>(loop_end - loop_start);
 
-    std::cout << "Loop duration: " << loop_duration.count()/1000.0 << " s" << endl;
+    // std::cout << "Loop duration: " << loop_duration.count()/1000.0 << " s" << endl;
     duration += double(loop_duration.count()/1000.0);
-    std::cout << "Loop past duration : " << duration << std::endl;
+    // std::cout << "Loop past duration : " << duration << std::endl;
 
     system_it++;
   }
@@ -314,22 +338,10 @@ int main(int argc, char const *argv[])
     }
   }
 
-  Logger::set_level(Logger::level::debug);
-  InterfaceInitParam param({
-      {UART::USE_SYS_POLLING, false},
-      {UART::PORT, "/dev/ttyUSB0"},
-      {UART::BAUDRATE, 115200}
-  });
-
-  UART uart;
-  uart.init(param);
-
-
-
-  thread writeUartThread(writeUart, std::ref(uart), std::ref(motion));
-  thread readUartThread(readAruco, std::ref(parser));
+  thread writeUartThread(writeUart, std::ref(motion));
+  thread readArucoThread(readAruco, std::ref(parser));
   writeUartThread.join();
-  readUartThread.join();
+  readArucoThread.join();
 
   return 0;
 }
